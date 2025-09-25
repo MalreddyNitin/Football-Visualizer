@@ -1,110 +1,120 @@
-const el = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id);
 
 async function getJSON(path, params) {
   const q = new URLSearchParams(params).toString();
-  const resp = await fetch(`/api/${path}?${q}`);
-  if (!resp.ok) throw new Error(await resp.text());
-  return resp.json();
+  const r = await fetch(`/api/${path}?${q}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
-function drawPitch(layout = {}) {
-  // Simple pitch rectangle (0..100 scale like WS)
+function pitchLayout(extra = {}) {
   return {
-    xaxis: {
-      range: [0, 100],
-      showgrid: false, zeroline: false, visible: false
-    },
-    yaxis: {
-      range: [0, 100],
-      showgrid: false, zeroline: false, visible: false, scaleanchor: "x", scaleratio: 1
-    },
-    paper_bgcolor: "#0f1115",
-    plot_bgcolor: "#0f1115",
-    margin: { l: 20, r: 20, t: 30, b: 20 },
-    ...layout
+    xaxis: { range: [0, 100], showgrid:false, zeroline:false, visible:false },
+    yaxis: { range: [0, 100], showgrid:false, zeroline:false, visible:false, scaleanchor:'x', scaleratio:1 },
+    paper_bgcolor: '#0f1115',
+    plot_bgcolor: '#0f1115',
+    font: { color: '#e5e7eb' },
+    margin: { l:20, r:20, t:40, b:20 },
+    ...extra
   };
 }
 
-function toMarker(name, x, y, size=14, label) {
+function nodeTrace(n) {
   return {
-    x: [x], y: [y], mode: "markers+text",
-    marker: { size: size, color: "#3b82f6", line: { color: "white", width: 2 } },
-    text: [label || name], textposition: "top center",
-    hovertemplate: `${name}<extra></extra>`
+    x: [n.x], y: [n.y], mode: 'markers+text', type:'scatter',
+    marker: { size: 18, color: '#3b82f6', line:{ color:'#fff', width:2 }},
+    text: [n.shirtNo || ''], textposition:'top center',
+    hovertemplate: `${n.name}<extra></extra>`
   };
 }
 
-function lineTrace(xs, ys, width=2, color="#e5e7eb", text) {
+function lineTrace(a, b, width=2, color='#e5e7eb', hover='') {
   return {
-    x: xs, y: ys, mode: "lines",
-    line: { width: width, color: color },
-    hovertemplate: (text ? `${text}<extra></extra>` : "<extra></extra>")
+    x: [a.x, b.x], y: [a.y, b.y], mode: 'lines', type:'scatter',
+    line: { width, color }, hovertemplate: hover ? `${hover}<extra></extra>` : '<extra></extra>'
   };
+}
+
+async function maybeLoadPlayers(url, team) {
+  try {
+    const players = await getJSON('players', { url, team });
+    const sel = $('player');
+    sel.innerHTML = '';
+    for (const p of players) {
+      const opt = document.createElement('option');
+      opt.value = p.playerId;
+      opt.textContent = `${p.shirtNo ?? ''} ${p.name}`;
+      sel.appendChild(opt);
+    }
+    $('player-wrap').classList.toggle('hidden', players.length === 0);
+  } catch (e) {
+    console.warn('players load failed', e);
+    $('player-wrap').classList.add('hidden');
+  }
 }
 
 async function render() {
-  const url = el("url").value.trim();
-  const team = el("team").value.trim();
-  const viz = el("viz").value;
+  const url = $('url').value.trim();
+  const team = $('team').value.trim();
+  const viz = $('viz').value;
 
   if (!url || !team) {
-    alert("Please provide match URL and Team");
+    alert('Please enter match URL and Team.');
     return;
   }
 
+  // update players list (useful for player-specific views later)
+  maybeLoadPlayers(url, team);
+
   try {
-    if (viz === "pass-network") {
-      const data = await getJSON("pass-network", { url, team });
+    if (viz === 'pass-network') {
+      const data = await getJSON('pass-network', { url, team });
       const traces = [];
-      // links
-      for (const l of data.links) {
-        const n1 = data.nodes.find(n => n.playerId === l.source);
-        const n2 = data.nodes.find(n => n.playerId === l.target);
-        if (!n1 || !n2) continue;
-        traces.push(lineTrace([n1.x, n2.x], [n1.y, n2.y], Math.max(1, Math.min(8, l.count/2))));
+      // edges
+      for (const e of data.links) {
+        const s = data.nodes.find(n => n.playerId === e.source);
+        const t = data.nodes.find(n => n.playerId === e.target);
+        if (!s || !t) continue;
+        traces.push(lineTrace(s, t, Math.max(1, Math.min(8, e.count / 2)), '#9ca3af', `${e.count} passes`));
       }
       // nodes
-      for (const n of data.nodes) {
-        traces.push(toMarker(n.name, n.x, n.y, 16, n.shirtNo || ""));
-      }
-      Plotly.newPlot("plot", traces, drawPitch({ title: "Pass Network" }), {displayModeBar:false});
+      for (const n of data.nodes) traces.push(nodeTrace(n));
+      Plotly.newPlot('plot', traces, pitchLayout({ title: `Pass Network – ${team}` }), {displayModeBar:false});
+      return;
     }
 
-    if (viz === "box-passes") {
-      const meta = await getJSON("match", { url });
-      const who = (meta.home === team) ? meta.home : meta.away;
-      if (!who) throw new Error("Team name not found in match meta.");
-
-      const res = await getJSON("box-passes", { url, team });
-      const lines = [];
-      for (const p of res.passes) {
-        lines.push(lineTrace([p.x, p.endX], [p.y, p.endY], 2, "#22c55e"));
-      }
-      Plotly.newPlot("plot", lines, drawPitch({ title: "Successful Box Passes" }), {displayModeBar:false});
+    if (viz === 'box-passes') {
+      const res = await getJSON('box-passes', { url, team });
+      const lines = res.passes.map(p => lineTrace({x:p.x,y:p.y},{x:p.endX,y:p.endY},2,'#22c55e','Successful box pass'));
+      Plotly.newPlot('plot', lines, pitchLayout({ title: `Successful Box Passes – ${team}` }), {displayModeBar:false});
+      return;
     }
 
-    if (viz === "shots") {
-      const res = await getJSON("shots", { url, team });
-      const goals = {
-        x: res.goals.map(d => d.x),
-        y: res.goals.map(d => d.y),
-        mode: "markers",
-        marker: { size: res.goals.map(d => Math.max(8, d.xG*60)), color: "#ef4444", line:{color:"black",width:1} },
-        name: "Goals", type: "scatter"
-      };
+    if (viz === 'shots') {
+      const res = await getJSON('shots', { url, team });
       const shots = {
         x: res.shots.map(d => d.x),
         y: res.shots.map(d => d.y),
-        mode: "markers",
-        marker: { size: res.shots.map(d => Math.max(6, d.xG*60)), color: "#e5e7eb", line:{color:"gray",width:1} },
-        name: "Shots", type: "scatter"
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Shots',
+        marker: { size: res.shots.map(d => Math.max(6, (d.xG || 0.07)*60)), color:'#e5e7eb', line:{color:'#666', width:1} }
       };
-      Plotly.newPlot("plot", [shots, goals], drawPitch({ title: "Shots & Goals" }), {displayModeBar:false});
+      const goals = {
+        x: res.goals.map(d => d.x),
+        y: res.goals.map(d => d.y),
+        mode: 'markers',
+        type: 'scatter',
+        name: 'Goals',
+        marker: { size: res.goals.map(d => Math.max(8, (d.xG || 0.2)*60)), color:'#ef4444', line:{color:'#000', width:1} }
+      };
+      Plotly.newPlot('plot', [shots, goals], pitchLayout({ title: `Shots & Goals – ${team}` }), {displayModeBar:false});
+      return;
     }
   } catch (e) {
     console.error(e);
-    alert("Error: " + e.message);
+    alert('Error: ' + e.message);
   }
 }
 
-document.getElementById("go").addEventListener("click", render);
+$('go').addEventListener('click', render);
