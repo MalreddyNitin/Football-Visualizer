@@ -1,87 +1,106 @@
+# main.py
+import requests
+from bs4 import BeautifulSoup
 import json
 import re
 import pandas as pd
 import numpy as np
-from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from collections import OrderedDict
 
-# === Headless browser context ===
-def get_html(url: str) -> str:
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, timeout=60000)
+# ----------------------------
+# Whoscored main entry
+# ----------------------------
+MAIN_URL = "https://1xbet.whoscored.com/"
 
-        # accept cookies if popup appears
-        try:
-            page.locator("//button[contains(text(), 'Accept all')]").click(timeout=5000)
-        except:
-            pass
-
-        html = page.content()
-        browser.close()
-        return html
-
-
-# === Scrape match data ===
 def getMatchData(url: str):
-    html = get_html(url)
-    soup = BeautifulSoup(html, "lxml")
+    """
+    Fetch match JSON data directly from the <script> tag on WhoScored match page.
+    No Selenium/Playwright needed.
+    """
 
-    # Extract JSON from <script>
-    script_tag = soup.find("script", text=re.compile("matchId"))
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                      " AppleWebKit/537.36 (KHTML, like Gecko)"
+                      " Chrome/120.0 Safari/537.36"
+    }
+    r = requests.get(url, headers=headers)
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    # Match JSON is embedded in a <script> tag
+    script_tag = soup.find("script", string=re.compile("matchId"))
+    if not script_tag:
+        raise ValueError("❌ Could not find match JSON script on page")
+
     script_content = script_tag.string
-
     script_content = re.sub(r"[\n\t]*", "", script_content)
     script_content = script_content[script_content.index("matchId"):script_content.rindex("}")]
-    script_content_list = list(filter(None, script_content.strip().split(",            ")))
+
+    script_content_list = list(filter(None, script_content.strip().split(',            ')))
     metadata = script_content_list.pop(1)
 
-    match_data = json.loads(metadata[metadata.index("{"):])
-    keys = [item[:item.index(":")].strip() for item in script_content_list]
-    values = [item[item.index(":") + 1:].strip() for item in script_content_list]
+    match_data = json.loads(metadata[metadata.index('{'):])
+    keys = [item[:item.index(':')].strip() for item in script_content_list]
+    values = [item[item.index(':') + 1:].strip() for item in script_content_list]
     for key, val in zip(keys, values):
         match_data[key] = json.loads(val)
 
-    # basic info
-    breadcrumb = soup.select_one("#breadcrumb-nav a").get_text(strip=True)
-    parts = breadcrumb.split(" - ")
-    match_data["league"] = parts[0]
-    match_data["season"] = parts[1] if len(parts) > 1 else ""
+    # Region, league, season
+    breadcrumb = soup.select_one("#breadcrumb-nav")
+    if breadcrumb:
+        parts = breadcrumb.get_text(" ", strip=True).split(" - ")
+        region = parts[0]
+        league = parts[1] if len(parts) > 1 else ""
+        season = parts[2] if len(parts) > 2 else ""
+    else:
+        region, league, season = "", "", ""
+
+    match_data["region"] = region
+    match_data["league"] = league
+    match_data["season"] = season
+
     return match_data
 
 
-# === Convert match data to pandas DF ===
 def createEventsDF(data):
+    """Convert match_data['events'] into a clean DataFrame"""
     events = data["events"]
     df = pd.DataFrame(events)
 
-    # add player names
-    df.loc[df.playerId.notna(), "playerId"] = (
-        df.loc[df.playerId.notna(), "playerId"].astype(int).astype(str)
-    )
-    df.insert(
-        loc=df.columns.get_loc("playerId") + 1,
-        column="playerName",
-        value=df["playerId"].map(data["playerIdNameDictionary"]),
-    )
+    # Clean type/outcome/period
+    if "type" in df.columns:
+        df["type"] = pd.json_normalize(df["type"])["displayName"]
+    if "outcomeType" in df.columns:
+        df["outcomeType"] = pd.json_normalize(df["outcomeType"])["displayName"]
+    if "period" in df.columns:
+        df["period"] = pd.json_normalize(df["period"])["displayName"]
 
-    # normalize some nested fields
-    df["period"] = pd.json_normalize(df["period"])["displayName"]
-    df["type"] = pd.json_normalize(df["type"])["displayName"]
-    df["outcomeType"] = pd.json_normalize(df["outcomeType"])["displayName"]
-    if "isShot" not in df:
-        df["isShot"] = False
-    if "isGoal" not in df:
-        df["isGoal"] = False
+    # Add player names
+    if "playerId" in df.columns:
+        df.loc[df.playerId.notna(), "playerId"] = df.loc[df.playerId.notna(), "playerId"].astype(int).astype(str)
+        df.insert(
+            loc=df.columns.get_loc("playerId") + 1,
+            column="playerName",
+            value=df["playerId"].map(data["playerIdNameDictionary"])
+        )
+
     return df
 
 
 def createMatchesDF(data):
-    cols = ["matchId", "venueName", "startTime", "startDate", "score", "home", "away"]
-    df = pd.DataFrame([{k: v for k, v in data.items() if k in cols}])
-    return df.set_index("matchId")
+    """Basic matches DataFrame"""
+    cols = ["matchId", "attendance", "venueName", "startTime", "startDate", "score", "home", "away", "referee"]
+    matches_df = pd.DataFrame([{k: v for k, v in data.items() if k in cols}])
+    return matches_df.set_index("matchId")
 
 
-def getHomeid(data):
-    return data["home"]["teamId"]
+# ----------------------------
+# Example usage
+# ----------------------------
+if __name__ == "__main__":
+    url = "https://1xbet.whoscored.com/Matches/404786/Live/Europe-Champions-League-2009-2010-Bayern-Munich-Inter"
+    match_data = getMatchData(url)
+    print("✅ Match ID:", match_data["matchId"])
+    events_df = createEventsDF(match_data)
+    print("Events shape:", events_df.shape)
