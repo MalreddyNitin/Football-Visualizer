@@ -1,7 +1,4 @@
-fastapi
-uvicorn
+flask
 requests
 beautifulsoup4
 lxml
-pandas
-numpy
