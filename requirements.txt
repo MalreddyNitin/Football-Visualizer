@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+playwright
+beautifulsoup4
+pandas
+numpy
+matplotlib
+seaborn
+mplsoccer
