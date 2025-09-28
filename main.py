@@ -50,10 +50,11 @@ def _extract_match_blob(html: str) -> dict:
 def getMatchData(url: str) -> dict:
     """
     Fetch WhoScored match JSON, handling both www.whoscored.com and 1xbet.whoscored.com domains.
-    Tries www first, then falls back to 1xbet if needed.
+    Uses a session to accept cookies first before requesting match data.
     """
 
     session = requests.Session()
+    session.headers.update(HEADERS)
 
     # --- Step 1: Normalize URL to www.whoscored.com
     if "1xbet.whoscored.com" in url:
@@ -63,22 +64,34 @@ def getMatchData(url: str) -> dict:
 
     # --- Step 2: Warm up cookies from www
     try:
-        session.get("https://www.whoscored.com/", headers=HEADERS, timeout=15)
-        resp = session.get(url_www, headers=HEADERS, timeout=15)
+        session.get("https://www.whoscored.com/", timeout=15)
+        resp = session.get(url_www, timeout=15)
+
+        if resp.status_code == 403:
+            raise requests.HTTPError("403 Forbidden – likely cookie/session/IP issue")
+
         resp.raise_for_status()
         return _extract_match_blob(resp.text)
-    except requests.HTTPError as e:
+
+    except requests.HTTPError:
         # --- Step 3: If www fails, fall back to 1xbet mirror
         if "1xbet.whoscored.com" not in url:
             url_1xbet = url.replace("www.whoscored.com", "1xbet.whoscored.com")
         else:
             url_1xbet = url
 
-        session.get("https://1xbet.whoscored.com/", headers=HEADERS, timeout=15)
-        resp = session.get(url_1xbet, headers=HEADERS, timeout=15)
+        session.get("https://1xbet.whoscored.com/", timeout=15)
+        resp = session.get(url_1xbet, timeout=15)
+
+        if resp.status_code == 403:
+            raise RuntimeError(
+                "403 Forbidden even after cookie warm-up. "
+                "This may be due to IP blocking (common on Render/Fly.io). "
+                "Try running locally or via a proxy."
+            )
+
         resp.raise_for_status()
         return _extract_match_blob(resp.text)
-
 
 # -------------------------------------------------------------------
 # DF creators
