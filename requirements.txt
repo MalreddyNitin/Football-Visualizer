@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+mplsoccer
+requests
+beautifulsoup4
+lxml
+cmasher
+highlight-text
