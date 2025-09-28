@@ -48,17 +48,37 @@ def _extract_match_blob(html: str) -> dict:
 # Public function: Download & parse with cookie session
 # -------------------------------------------------------------------
 def getMatchData(url: str) -> dict:
+    """
+    Fetch WhoScored match JSON, handling both www.whoscored.com and 1xbet.whoscored.com domains.
+    Tries www first, then falls back to 1xbet if needed.
+    """
+
     session = requests.Session()
 
-    # Step 1: Warm up session (get homepage to grab cookies)
-    home_url = "https://www.whoscored.com/"
-    session.get(home_url, headers=HEADERS, timeout=15)
+    # --- Step 1: Normalize URL to www.whoscored.com
+    if "1xbet.whoscored.com" in url:
+        url_www = url.replace("1xbet.whoscored.com", "www.whoscored.com")
+    else:
+        url_www = url
 
-    # Step 2: Fetch actual match page with cookies carried over
-    resp = session.get(url, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
+    # --- Step 2: Warm up cookies from www
+    try:
+        session.get("https://www.whoscored.com/", headers=HEADERS, timeout=15)
+        resp = session.get(url_www, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        return _extract_match_blob(resp.text)
+    except requests.HTTPError as e:
+        # --- Step 3: If www fails, fall back to 1xbet mirror
+        if "1xbet.whoscored.com" not in url:
+            url_1xbet = url.replace("www.whoscored.com", "1xbet.whoscored.com")
+        else:
+            url_1xbet = url
 
-    return _extract_match_blob(resp.text)
+        session.get("https://1xbet.whoscored.com/", headers=HEADERS, timeout=15)
+        resp = session.get(url_1xbet, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        return _extract_match_blob(resp.text)
+
 
 # -------------------------------------------------------------------
 # DF creators
