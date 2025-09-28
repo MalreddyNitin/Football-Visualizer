@@ -5,13 +5,26 @@ import pandas as pd
 from bs4 import BeautifulSoup
 
 # -------------------------------------------------------------------
-# Utility: Extract embedded match JSON from WhoScored HTML
+# Headers (spoofing a real Chrome browser)
+# -------------------------------------------------------------------
+HEADERS = {
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "referer": "https://www.whoscored.com/",
+    "cache-control": "no-cache",
+    "pragma": "no-cache",
+    "dnt": "1",
+}
+
+# -------------------------------------------------------------------
+# Utility: Extract embedded match JSON
 # -------------------------------------------------------------------
 def _extract_match_blob(html: str) -> dict:
-    """
-    WhoScored match pages embed a big JSON-ish object in a <script>.
-    We locate the <script> that contains 'matchId' and parse it.
-    """
     soup = BeautifulSoup(html, "lxml")
     scripts = soup.find_all("script")
 
@@ -25,51 +38,35 @@ def _extract_match_blob(html: str) -> dict:
     if not target:
         raise ValueError("Could not find embedded match JSON in page")
 
-    # Extract JSON-ish string
     match = re.search(r"matchCentreData\s*=\s*({.*});", target)
     if not match:
         raise ValueError("Could not parse matchCentreData block")
 
-    data = json.loads(match.group(1))
-    return data
-
+    return json.loads(match.group(1))
 
 # -------------------------------------------------------------------
-# Public function: Download & parse WhoScored match
+# Public function: Download & parse with cookie session
 # -------------------------------------------------------------------
 def getMatchData(url: str) -> dict:
-    """
-    Download match page and return parsed match JSON (match_data).
-    """
-    headers = {
-        "user-agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/123 Safari/537.36"
-        )
-    }
-    resp = requests.get(url, headers=headers)
+    session = requests.Session()
+
+    # Step 1: Warm up session (get homepage to grab cookies)
+    home_url = "https://www.whoscored.com/"
+    session.get(home_url, headers=HEADERS, timeout=15)
+
+    # Step 2: Fetch actual match page with cookies carried over
+    resp = session.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
 
     return _extract_match_blob(resp.text)
 
-
 # -------------------------------------------------------------------
-# Convert match JSON into DataFrames
+# DF creators
 # -------------------------------------------------------------------
 def createEventsDF(match_data: dict) -> pd.DataFrame:
-    """
-    Turn the 'events' list into a Pandas DataFrame.
-    """
-    events = match_data.get("events", [])
-    return pd.DataFrame(events)
-
+    return pd.DataFrame(match_data.get("events", []))
 
 def createMatchesDF(match_data: dict) -> pd.DataFrame:
-    """
-    Turn top-level match info into a one-row DataFrame.
-    Useful if you want to store/compare multiple matches.
-    """
     meta = {
         "matchId": match_data.get("matchId"),
         "homeTeam": match_data.get("home", {}).get("name"),
@@ -79,19 +76,12 @@ def createMatchesDF(match_data: dict) -> pd.DataFrame:
     }
     return pd.DataFrame([meta])
 
-
 # -------------------------------------------------------------------
-# Convenience if you want to test this file directly
+# Debug
 # -------------------------------------------------------------------
 if __name__ == "__main__":
-    # Example WhoScored match (replace with a real URL)
-    url = "https://www.whoscored.com/Matches/1736362/Live/England-Premier-League-2023-2024-Arsenal-Manchester-City"
-    match_data = getMatchData(url)
-
+    test_url = "https://www.whoscored.com/Matches/1736362/Live/England-Premier-League-2023-2024-Arsenal-Manchester-City"
+    match_data = getMatchData(test_url)
     print("Match ID:", match_data["matchId"])
     events_df = createEventsDF(match_data)
-    matches_df = createMatchesDF(match_data)
-
-    print("Events shape:", events_df.shape)
-    print("Matches DF:")
-    print(matches_df.head())
+    print("Events:", events_df.shape)
