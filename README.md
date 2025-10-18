@@ -4,7 +4,6 @@
 Grab the zip from the latest Release:
 
 - Go to **Releases** → download the two files, then unzip it into `backend/`
-- .
 ## 🚀 Run Locally
 
 ```bash
