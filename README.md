@@ -1,15 +1,10 @@
-# ⚽ Football Analytics Streamlit App
+# ⚽ Premier League 2024/25 Streamlit App
 
-This Streamlit app scrapes match data from [WhoScored](https://whoscored.com) 
-and generates interactive football visualizations:
+### Download the data
+Grab the zip from the latest Release:
 
-- Shotmaps (Team)
-- Pass Networks (Team)
-- Box Passes (Team)
-- Touchmap (Player) [hexbin style]
-- Heatmap (Player) [KDE with cmasher colormap]
-- Defensive Actions (Player)
-
+- Go to **Releases** → download the two files, then unzip it into `backend/`
+- .
 ## 🚀 Run Locally
 
 ```bash
